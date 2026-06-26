@@ -2,8 +2,11 @@ from http.server import BaseHTTPRequestHandler
 import json
 import io
 import csv
+import os
 from datetime import datetime
 from typing import Optional, Dict, List
+
+os.environ["J_CACHE_DIR"] = "/tmp"
 
 import pandas as pd
 import yfinance as yf
@@ -135,6 +138,8 @@ def _fetch_jugaad(symbol: str, start: Optional[str], end: Optional[str]) -> pd.D
         ed = dt_date.fromisoformat(end)
     else:
         ed = dt_date.today()
+    from jugaad_data.nse.history import NSEHistory
+    NSEHistory.cache_dir = "/tmp/.cache"
     df = stock_df(symbol=bare, from_date=sd, to_date=ed, series="EQ")
     if df is None or df.empty:
         return pd.DataFrame()
@@ -198,6 +203,17 @@ def fetch_symbol(symbol: str, start: Optional[str], end: Optional[str],
             errors.append("yfinance: empty result")
     except Exception as e:
         errors.append(f"yfinance: {e}")
+
+    # Retry yfinance with auto_adjust=True (newer default)
+    if not auto_adjust:
+        try:
+            df = _fetch_yfinance(symbol, start, end, True)
+            if df is not None and not df.empty:
+                return _build_result(df, symbol, "yfinance(auto)", start, end, include_adj)
+            else:
+                errors.append("yfinance(auto_adjust=True): empty")
+        except Exception as e:
+            errors.append(f"yfinance(auto): {e}")
 
     # Fallback to jugaad-data (NSE direct)
     try:
