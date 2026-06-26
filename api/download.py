@@ -16,7 +16,7 @@ NSE_ALIASES = {
     "NATCO": "NATCOPHARM", "NATACO": "NATCOPHARM",
     "HDFC": "HDFCBANK", "ICICI": "ICICIBANK", "KOTAK": "KOTAKBANK",
     "TATA": "TCS", "INFOSYS": "INFY",
-    "TATA MOTORS": "TATAMOTORS", "MAHINDRA": "M_M", "M&M": "M_M",
+    "TATA MOTORS": "TATAMOTORS", "MAHINDRA": "M&M", "M_M": "M&M", "MM": "M&M",
     "HINDUSTAN UNILEVER": "HINDUNILVR",
     "LARSEN": "LT", "LARSEN & TOUBRO": "LT",
     "SBI": "SBIN", "BAJAJ FINANCE": "BAJFINANCE", "BAJAJ FINSERV": "BAJAJFINSV",
@@ -116,14 +116,23 @@ def normalize(df: pd.DataFrame, include_adj: bool) -> pd.DataFrame:
     if include_adj and "ADJ_CLOSE" in df.columns: cols.append("ADJ_CLOSE")
     return df[cols]
 
+def _yahoo_ticker(symbol: str) -> str:
+    """M&M.NS -> M%26M.NS for Yahoo Finance"""
+    if ".NS" in symbol or ".BO" in symbol:
+        suf = symbol[-3:]
+        bare = symbol[:-3].replace("&", "%26")
+        return bare + suf
+    return symbol.replace("&", "%26")
+
 def _fetch_yfinance(symbol: str, start: Optional[str], end: Optional[str],
                     auto_adjust: bool) -> pd.DataFrame:
+    yticker = _yahoo_ticker(symbol)
     kwargs = {"interval": "1d", "progress": False, "auto_adjust": auto_adjust}
     if start and end:
         kwargs["start"] = start; kwargs["end"] = end
     else:
         kwargs["period"] = "max"
-    df = yf.download(symbol, **kwargs)
+    df = yf.download(yticker, **kwargs)
     return df if df is not None else pd.DataFrame()
 
 def _fetch_jugaad(symbol: str, start: Optional[str], end: Optional[str]) -> pd.DataFrame:
