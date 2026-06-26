@@ -499,12 +499,12 @@ const yearAgo = new Date(today); yearAgo.setFullYear(yearAgo.getFullYear() - 1);
 document.getElementById('endDate').value = today.toISOString().slice(0, 10);
 document.getElementById('startDate').value = yearAgo.toISOString().slice(0, 10);
 
-async function fetchBatch(symbols, dates) {
+async function fetchOne(symbol, dates) {
   const resp = await fetch('/api/download', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
-      symbols,
+      symbols: [symbol],
       exchange: document.getElementById('exchange').value,
       fuzzy: document.getElementById('fuzzy').checked,
       start: dates.start,
@@ -514,7 +514,16 @@ async function fetchBatch(symbols, dates) {
     })
   });
   const data = await resp.json();
-  return data.results;
+  return data.results[0];
+}
+
+function updateStatusLog() {
+  let html = '';
+  allResults.forEach(r => {
+    if (r.ok) html += `<div class="log-line ok">✅ ${r.symbol} — ${r.rows} rows via ${r.provider || 'yfinance'}</div>`;
+    else html += `<div class="log-line fail">❌ ${r.symbol} — ${r.error}</div>`;
+  });
+  document.getElementById('statusLog').innerHTML = html;
 }
 
 async function fetchData() {
@@ -529,28 +538,22 @@ async function fetchData() {
   status.classList.add('show');
   resultsEl.classList.remove('show');
   document.getElementById('statusLog').innerHTML = '';
+  allResults = [];
 
   const dates = getDateRange();
-  const BATCH_SIZE = 5;
-  allResults = [];
+  const PARALLEL = 3;
   let done = 0;
 
   try {
-    for (let i = 0; i < symbols.length; i += BATCH_SIZE) {
-      const batch = symbols.slice(i, i + BATCH_SIZE);
+    for (let i = 0; i < symbols.length; i += PARALLEL) {
+      const chunk = symbols.slice(i, i + PARALLEL);
       document.getElementById('statusText').innerHTML =
-        `<span class="spinner"></span> Fetching ${done}/${symbols.length} symbols... (batch ${Math.floor(i/BATCH_SIZE)+1}/${Math.ceil(symbols.length/BATCH_SIZE)})`;
-      const batchResults = await fetchBatch(batch, dates);
-      allResults.push(...batchResults);
-      done += batch.length;
-
-      // Live log update
-      let html = '';
-      allResults.forEach(r => {
-        if (r.ok) html += `<div class="log-line ok">✅ ${r.symbol} — ${r.rows} rows via ${r.provider || 'yfinance'}</div>`;
-        else html += `<div class="log-line fail">❌ ${r.symbol} — ${r.error}</div>`;
-      });
-      document.getElementById('statusLog').innerHTML = html;
+        `<span class="spinner"></span> Fetching ${done}/${symbols.length} symbols...`;
+      const promises = chunk.map(sym => fetchOne(sym, dates));
+      const results = await Promise.all(promises);
+      allResults.push(...results);
+      done += chunk.length;
+      updateStatusLog();
     }
 
     renderStatus(allResults);

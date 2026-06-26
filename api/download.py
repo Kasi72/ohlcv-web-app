@@ -127,7 +127,8 @@ def _yahoo_ticker(symbol: str) -> str:
 def _fetch_yfinance(symbol: str, start: Optional[str], end: Optional[str],
                     auto_adjust: bool) -> pd.DataFrame:
     yticker = _yahoo_ticker(symbol)
-    kwargs = {"interval": "1d", "progress": False, "auto_adjust": auto_adjust}
+    kwargs = {"interval": "1d", "progress": False, "auto_adjust": auto_adjust,
+              "timeout": 15}
     if start and end:
         kwargs["start"] = start; kwargs["end"] = end
     else:
