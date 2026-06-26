@@ -232,7 +232,7 @@ class handler(BaseHTTPRequestHandler):
                 symbols.append(sym); seen.add(sym)
 
         results = []
-        for sym in symbols[:20]:
+        for sym in symbols[:50]:
             results.append(fetch_symbol(sym, start, end, auto_adjust, include_adj))
 
         self.send_response(200)

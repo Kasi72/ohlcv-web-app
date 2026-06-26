@@ -311,6 +311,7 @@
     margin-top: 40px;
   }
 </style>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
 </head>
 <body>
 
@@ -498,43 +499,85 @@ const yearAgo = new Date(today); yearAgo.setFullYear(yearAgo.getFullYear() - 1);
 document.getElementById('endDate').value = today.toISOString().slice(0, 10);
 document.getElementById('startDate').value = yearAgo.toISOString().slice(0, 10);
 
+async function fetchBatch(symbols, dates) {
+  const resp = await fetch('/api/download', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      symbols,
+      exchange: document.getElementById('exchange').value,
+      fuzzy: document.getElementById('fuzzy').checked,
+      start: dates.start,
+      end: dates.end,
+      auto_adjust: document.getElementById('autoAdj').checked,
+      include_adj: document.getElementById('inclAdj').checked,
+    })
+  });
+  const data = await resp.json();
+  return data.results;
+}
+
 async function fetchData() {
   const symbols = parseSymbols();
   if (!symbols.length) { showToast('Enter at least one symbol', true); return; }
 
+  const isBatchUpload = csvSymbols.length > 0;
   const btn = document.getElementById('btnFetch');
   const status = document.getElementById('status');
-  const results = document.getElementById('results');
+  const resultsEl = document.getElementById('results');
   btn.disabled = true;
   status.classList.add('show');
-  results.classList.remove('show');
+  resultsEl.classList.remove('show');
   document.getElementById('statusLog').innerHTML = '';
-  document.getElementById('statusText').innerHTML = '<span class="spinner"></span> Fetching ' + symbols.length + ' symbol(s)...';
 
   const dates = getDateRange();
+  const BATCH_SIZE = 5;
+  allResults = [];
+  let done = 0;
 
   try {
-    const resp = await fetch('/api/download', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        symbols,
-        exchange: document.getElementById('exchange').value,
-        fuzzy: document.getElementById('fuzzy').checked,
-        start: dates.start,
-        end: dates.end,
-        auto_adjust: document.getElementById('autoAdj').checked,
-        include_adj: document.getElementById('inclAdj').checked,
-      })
-    });
-    const data = await resp.json();
-    allResults = data.results;
-    renderStatus(data.results);
-    renderResults(data.results);
+    for (let i = 0; i < symbols.length; i += BATCH_SIZE) {
+      const batch = symbols.slice(i, i + BATCH_SIZE);
+      document.getElementById('statusText').innerHTML =
+        `<span class="spinner"></span> Fetching ${done}/${symbols.length} symbols... (batch ${Math.floor(i/BATCH_SIZE)+1}/${Math.ceil(symbols.length/BATCH_SIZE)})`;
+      const batchResults = await fetchBatch(batch, dates);
+      allResults.push(...batchResults);
+      done += batch.length;
+
+      // Live log update
+      let html = '';
+      allResults.forEach(r => {
+        if (r.ok) html += `<div class="log-line ok">✅ ${r.symbol} — ${r.rows} rows via ${r.provider || 'yfinance'}</div>`;
+        else html += `<div class="log-line fail">❌ ${r.symbol} — ${r.error}</div>`;
+      });
+      document.getElementById('statusLog').innerHTML = html;
+    }
+
+    renderStatus(allResults);
+    renderResults(allResults);
+
+    if (isBatchUpload && allResults.filter(r => r.ok).length > 1) {
+      await downloadZip();
+    }
   } catch (e) {
     document.getElementById('statusText').innerHTML = '❌ Error: ' + e.message;
   }
   btn.disabled = false;
+}
+
+async function downloadZip() {
+  const okResults = allResults.filter(r => r.ok);
+  if (!okResults.length) { showToast('No data to download', true); return; }
+
+  const zip = new JSZip();
+  okResults.forEach(r => {
+    zip.file(r.symbol.replace('.','_') + '_OHLCV.csv', toCsvString(r));
+  });
+  zip.file('ALL_SYMBOLS_OHLCV.csv', combinedCsvString(allResults));
+
+  const blob = await zip.generateAsync({ type: 'blob' });
+  const ts = new Date().toISOString().slice(0,19).replace(/[:-]/g,'');
+  downloadBlob(blob, `OHLCV_${okResults.length}_symbols_${ts}.zip`);
 }
 
 function renderStatus(results) {
@@ -563,7 +606,7 @@ function formatDate(isoStr) {
   return `${dd}/${mm}/${yyyy}`;
 }
 
-function toCsvBlob(result) {
+function toCsvString(result) {
   const incAdj = document.getElementById('inclAdj').checked;
   let cols = ['DATE','OPEN','HIGH','LOW','CLOSE','VOLUME'];
   if (incAdj) cols.push('ADJ_CLOSE');
@@ -573,10 +616,14 @@ function toCsvBlob(result) {
     if (incAdj) vals.push(row.ADJ_CLOSE ?? '');
     csv += vals.join(',') + '\n';
   });
-  return new Blob([csv], { type: 'text/csv' });
+  return csv;
 }
 
-function combinedCsvBlob(results) {
+function toCsvBlob(result) {
+  return new Blob([toCsvString(result)], { type: 'text/csv' });
+}
+
+function combinedCsvString(results) {
   const incAdj = document.getElementById('inclAdj').checked;
   let cols = ['SYMBOL','DATE','OPEN','HIGH','LOW','CLOSE','VOLUME'];
   if (incAdj) cols.push('ADJ_CLOSE');
@@ -588,7 +635,11 @@ function combinedCsvBlob(results) {
       csv += vals.join(',') + '\n';
     });
   });
-  return new Blob([csv], { type: 'text/csv' });
+  return csv;
+}
+
+function combinedCsvBlob(results) {
+  return new Blob([combinedCsvString(results)], { type: 'text/csv' });
 }
 
 function downloadBlob(blob, filename) {
@@ -611,6 +662,7 @@ function renderResults(results) {
   // Download buttons
   let btns = '';
   if (okResults.length > 1) {
+    btns += `<button class="btn-dl" onclick="downloadZip()" style="background:rgba(0,255,240,0.18);font-size:1rem;padding:12px 24px;">📦 Download All as ZIP (${okResults.length} symbols)</button>`;
     btns += `<button class="btn-dl" onclick="downloadCombined()">📋 Combined CSV</button>`;
   }
   okResults.forEach((r, i) => {
