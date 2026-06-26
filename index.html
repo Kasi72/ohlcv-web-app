@@ -1,0 +1,711 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>NSE OHLCV Pro Downloader</title>
+<style>
+  :root {
+    --bg: #0a0f1f;
+    --bg2: #111827;
+    --bg3: #1a2234;
+    --text: #e5e7eb;
+    --text2: #9ca3af;
+    --accent: #00fff0;
+    --accent2: #00ccbb;
+    --red: #ff4d6a;
+    --green: #39ff14;
+    --border: rgba(255,255,255,0.1);
+  }
+  * { margin:0; padding:0; box-sizing:border-box; }
+  body {
+    font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    min-height: 100vh;
+  }
+  .header {
+    background: linear-gradient(135deg, var(--bg2) 0%, var(--bg) 100%);
+    border-bottom: 1px solid var(--border);
+    padding: 20px 0;
+    text-align: center;
+  }
+  .header h1 {
+    font-size: 1.8rem;
+    font-weight: 800;
+    background: linear-gradient(135deg, var(--accent), #fff);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+  }
+  .header p { color: var(--text2); margin-top: 4px; font-size: 0.9rem; }
+  .container { max-width: 1200px; margin: 0 auto; padding: 24px 20px; }
+
+  /* Input section */
+  .input-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 20px;
+    margin-bottom: 20px;
+  }
+  @media (max-width: 700px) { .input-grid { grid-template-columns: 1fr; } }
+
+  .card {
+    background: var(--bg2);
+    border: 1px solid var(--border);
+    border-radius: 16px;
+    padding: 20px;
+  }
+  .card h3 {
+    font-size: 0.85rem;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    color: var(--accent);
+    margin-bottom: 12px;
+  }
+  label {
+    display: block;
+    font-size: 0.82rem;
+    color: var(--text2);
+    margin-bottom: 4px;
+    margin-top: 10px;
+  }
+  label:first-of-type { margin-top: 0; }
+  input, select, textarea {
+    width: 100%;
+    padding: 10px 14px;
+    border-radius: 10px;
+    border: 1px solid var(--border);
+    background: var(--bg3);
+    color: var(--text);
+    font-size: 0.95rem;
+    outline: none;
+    transition: border-color .2s, box-shadow .2s;
+  }
+  input:focus, select:focus, textarea:focus {
+    border-color: var(--accent);
+    box-shadow: 0 0 0 3px rgba(0,255,240,0.15);
+  }
+  textarea { resize: vertical; min-height: 80px; font-family: inherit; }
+
+  /* Settings row */
+  .settings-row {
+    display: flex; flex-wrap: wrap; gap: 12px;
+    margin-bottom: 20px;
+  }
+  .setting {
+    background: var(--bg2);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 10px 16px;
+    display: flex; align-items: center; gap: 8px;
+    font-size: 0.85rem;
+  }
+  .setting select {
+    width: auto; padding: 4px 8px; font-size: 0.82rem;
+    border-radius: 6px;
+  }
+  .toggle {
+    position: relative;
+    width: 40px; height: 22px;
+    cursor: pointer;
+  }
+  .toggle input { opacity:0; width:0; height:0; }
+  .toggle .slider {
+    position: absolute; inset: 0;
+    background: #374151; border-radius: 22px;
+    transition: .2s;
+  }
+  .toggle .slider:before {
+    content: '';
+    position: absolute;
+    width: 16px; height: 16px;
+    left: 3px; top: 3px;
+    background: #fff; border-radius: 50%;
+    transition: .2s;
+  }
+  .toggle input:checked + .slider { background: var(--accent2); }
+  .toggle input:checked + .slider:before { transform: translateX(18px); }
+
+  /* Download button */
+  .btn-download {
+    width: 100%;
+    padding: 16px;
+    border: none;
+    border-radius: 14px;
+    font-size: 1.1rem;
+    font-weight: 800;
+    letter-spacing: .5px;
+    cursor: pointer;
+    background: linear-gradient(135deg, var(--accent), var(--accent2));
+    color: #0a0a0a;
+    box-shadow: 0 0 20px rgba(0,255,240,0.3), 0 0 40px rgba(0,255,240,0.1);
+    transition: transform .1s, box-shadow .2s;
+    margin-bottom: 24px;
+  }
+  .btn-download:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 0 30px rgba(0,255,240,0.4), 0 0 60px rgba(0,255,240,0.15);
+  }
+  .btn-download:active { transform: translateY(0) scale(0.99); }
+  .btn-download:disabled {
+    opacity: 0.5; cursor: not-allowed; transform: none;
+    box-shadow: none;
+  }
+
+  /* Status */
+  .status-bar {
+    background: var(--bg2);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 16px;
+    margin-bottom: 20px;
+    display: none;
+  }
+  .status-bar.show { display: block; }
+  .status-bar .spinner {
+    display: inline-block;
+    width: 18px; height: 18px;
+    border: 2px solid var(--border);
+    border-top-color: var(--accent);
+    border-radius: 50%;
+    animation: spin .6s linear infinite;
+    vertical-align: middle;
+    margin-right: 8px;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  .log-line { font-size: 0.85rem; margin: 4px 0; }
+  .log-line.ok { color: var(--green); }
+  .log-line.fail { color: var(--red); }
+
+  /* Results */
+  #results { display: none; }
+  #results.show { display: block; }
+
+  .dl-buttons {
+    display: flex; flex-wrap: wrap; gap: 10px;
+    margin-bottom: 24px;
+  }
+  .btn-dl {
+    padding: 10px 20px;
+    border: 1px solid var(--accent);
+    border-radius: 10px;
+    background: rgba(0,255,240,0.08);
+    color: var(--accent);
+    font-weight: 700;
+    font-size: 0.9rem;
+    cursor: pointer;
+    transition: background .15s, transform .1s;
+    text-decoration: none;
+  }
+  .btn-dl:hover { background: rgba(0,255,240,0.18); transform: translateY(-1px); }
+
+  /* Metrics */
+  .metrics-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+    gap: 12px;
+    margin-bottom: 20px;
+  }
+  .metric {
+    background: var(--bg2);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 14px;
+    text-align: center;
+  }
+  .metric .label { font-size: 0.75rem; color: var(--text2); text-transform: uppercase; letter-spacing: .5px; }
+  .metric .value { font-size: 1.3rem; font-weight: 800; margin-top: 4px; color: var(--accent); }
+
+  /* Table */
+  .sym-section { margin-bottom: 28px; }
+  .sym-section h3 { font-size: 1rem; margin-bottom: 10px; color: var(--accent); }
+  .table-wrap {
+    overflow-x: auto;
+    border: 1px solid var(--border);
+    border-radius: 12px;
+  }
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 0.85rem;
+  }
+  th {
+    background: var(--bg3);
+    padding: 10px 14px;
+    text-align: left;
+    font-weight: 700;
+    color: var(--accent);
+    border-bottom: 1px solid var(--border);
+    position: sticky; top: 0;
+  }
+  td {
+    padding: 8px 14px;
+    border-bottom: 1px solid rgba(255,255,255,0.04);
+  }
+  tr:hover td { background: rgba(0,255,240,0.03); }
+
+  /* Chart */
+  .chart-container {
+    background: var(--bg2);
+    border: 1px solid var(--border);
+    border-radius: 14px;
+    padding: 16px;
+    margin-bottom: 16px;
+    position: relative;
+  }
+  canvas { width: 100% !important; height: 260px !important; }
+
+  /* Tabs */
+  .tabs { display: flex; gap: 4px; flex-wrap: wrap; margin-bottom: 16px; }
+  .tab-btn {
+    padding: 8px 18px;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    background: transparent;
+    color: var(--text2);
+    cursor: pointer;
+    font-size: 0.85rem;
+    font-weight: 600;
+    transition: .15s;
+  }
+  .tab-btn.active {
+    background: var(--accent);
+    color: #0a0a0a;
+    border-color: var(--accent);
+  }
+  .tab-panel { display: none; }
+  .tab-panel.active { display: block; }
+
+  .toast {
+    position: fixed; bottom: 24px; right: 24px;
+    background: var(--green); color: #0a0a0a;
+    padding: 12px 20px; border-radius: 10px;
+    font-weight: 700; font-size: 0.9rem;
+    box-shadow: 0 4px 20px rgba(0,0,0,0.4);
+    transform: translateY(80px); opacity: 0;
+    transition: .3s;
+    z-index: 999;
+  }
+  .toast.show { transform: translateY(0); opacity: 1; }
+
+  .footer {
+    text-align: center; padding: 30px;
+    color: var(--text2); font-size: 0.8rem;
+    border-top: 1px solid var(--border);
+    margin-top: 40px;
+  }
+</style>
+</head>
+<body>
+
+<div class="header">
+  <h1>📊 NSE OHLCV Pro Downloader</h1>
+  <p>Fast, validated NSE/BSE historical data — download as CSV</p>
+</div>
+
+<div class="container">
+  <!-- Inputs -->
+  <div class="input-grid">
+    <div class="card">
+      <h3>📌 Symbols</h3>
+      <label>Single symbol or common name</label>
+      <input type="text" id="single" placeholder="e.g. RELIANCE or NATCO">
+      <label>Multiple symbols (comma or newline separated)</label>
+      <textarea id="multi" placeholder="TCS&#10;INFY&#10;SBIN, HDFCBANK"></textarea>
+    </div>
+    <div class="card">
+      <h3>📅 Period</h3>
+      <label>Preset period</label>
+      <select id="period">
+        <option value="6">6 Months</option>
+        <option value="1">1 Month</option>
+        <option value="3">3 Months</option>
+        <option value="12">1 Year</option>
+        <option value="24">2 Years</option>
+        <option value="36">3 Years</option>
+        <option value="60">5 Years</option>
+        <option value="120">10 Years</option>
+        <option value="max">Max (all available)</option>
+        <option value="custom">Custom Range</option>
+      </select>
+      <div id="customDates" style="display:none;">
+        <label>Start date</label>
+        <input type="date" id="startDate">
+        <label>End date</label>
+        <input type="date" id="endDate">
+      </div>
+    </div>
+  </div>
+
+  <!-- Settings -->
+  <div class="settings-row">
+    <div class="setting">
+      <span>Exchange</span>
+      <select id="exchange"><option value=".NS">NSE</option><option value=".BO">BSE</option></select>
+    </div>
+    <div class="setting">
+      <span>Auto-adjust</span>
+      <label class="toggle"><input type="checkbox" id="autoAdj"><span class="slider"></span></label>
+    </div>
+    <div class="setting">
+      <span>ADJ_CLOSE</span>
+      <label class="toggle"><input type="checkbox" id="inclAdj"><span class="slider"></span></label>
+    </div>
+    <div class="setting">
+      <span>Fuzzy match</span>
+      <label class="toggle"><input type="checkbox" id="fuzzy" checked><span class="slider"></span></label>
+    </div>
+    <div class="setting">
+      <span>Date format</span>
+      <select id="dateFmt">
+        <option value="dd-MMM-yyyy">25-Jun-2026</option>
+        <option value="yyyy-MM-dd">2026-06-25</option>
+        <option value="dd/MM/yyyy">25/06/2026</option>
+      </select>
+    </div>
+  </div>
+
+  <button class="btn-download" id="btnFetch" onclick="fetchData()">⬇️ Download OHLCV Data</button>
+
+  <!-- Status -->
+  <div class="status-bar" id="status">
+    <div id="statusText"><span class="spinner"></span> Fetching data...</div>
+    <div id="statusLog"></div>
+  </div>
+
+  <!-- Results -->
+  <div id="results">
+    <div class="dl-buttons" id="dlButtons"></div>
+    <div id="symbolSections"></div>
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<div class="footer">
+  📊 NSE OHLCV Pro Downloader &middot; Dr KKR &middot; Data via Yahoo Finance
+</div>
+
+<script>
+let allResults = [];
+
+function parseSymbols() {
+  const s = document.getElementById('single').value.trim();
+  const m = document.getElementById('multi').value.trim();
+  const parts = [];
+  if (s) parts.push(s);
+  if (m) m.split(/[\n,]+/).map(t => t.trim()).filter(Boolean).forEach(t => {
+    t.split(/\s+/).forEach(p => { if (p) parts.push(p); });
+  });
+  return [...new Set(parts)];
+}
+
+function getDateRange() {
+  const p = document.getElementById('period').value;
+  if (p === 'custom') {
+    return { start: document.getElementById('startDate').value, end: document.getElementById('endDate').value };
+  }
+  if (p === 'max') return { start: null, end: null };
+  const today = new Date();
+  const start = new Date(today);
+  start.setMonth(start.getMonth() - parseInt(p));
+  return {
+    start: start.toISOString().slice(0, 10),
+    end: today.toISOString().slice(0, 10)
+  };
+}
+
+document.getElementById('period').addEventListener('change', e => {
+  document.getElementById('customDates').style.display = e.target.value === 'custom' ? 'block' : 'none';
+});
+
+// Set default custom dates
+const today = new Date();
+const yearAgo = new Date(today); yearAgo.setFullYear(yearAgo.getFullYear() - 1);
+document.getElementById('endDate').value = today.toISOString().slice(0, 10);
+document.getElementById('startDate').value = yearAgo.toISOString().slice(0, 10);
+
+async function fetchData() {
+  const symbols = parseSymbols();
+  if (!symbols.length) { showToast('Enter at least one symbol', true); return; }
+
+  const btn = document.getElementById('btnFetch');
+  const status = document.getElementById('status');
+  const results = document.getElementById('results');
+  btn.disabled = true;
+  status.classList.add('show');
+  results.classList.remove('show');
+  document.getElementById('statusLog').innerHTML = '';
+  document.getElementById('statusText').innerHTML = '<span class="spinner"></span> Fetching ' + symbols.length + ' symbol(s)...';
+
+  const dates = getDateRange();
+
+  try {
+    const resp = await fetch('/api/download', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        symbols,
+        exchange: document.getElementById('exchange').value,
+        fuzzy: document.getElementById('fuzzy').checked,
+        start: dates.start,
+        end: dates.end,
+        auto_adjust: document.getElementById('autoAdj').checked,
+        include_adj: document.getElementById('inclAdj').checked,
+      })
+    });
+    const data = await resp.json();
+    allResults = data.results;
+    renderStatus(data.results);
+    renderResults(data.results);
+  } catch (e) {
+    document.getElementById('statusText').innerHTML = '❌ Error: ' + e.message;
+  }
+  btn.disabled = false;
+}
+
+function renderStatus(results) {
+  const log = document.getElementById('statusLog');
+  const ok = results.filter(r => r.ok).length;
+  const fail = results.length - ok;
+  document.getElementById('statusText').innerHTML =
+    `✅ Done — ${ok} succeeded` + (fail ? `, <span style="color:var(--red)">${fail} failed</span>` : '');
+  let html = '';
+  results.forEach(r => {
+    if (r.ok) html += `<div class="log-line ok">✅ ${r.symbol} — ${r.rows} rows (${r.start} → ${r.end})</div>`;
+    else html += `<div class="log-line fail">❌ ${r.symbol} — ${r.error}</div>`;
+  });
+  log.innerHTML = html;
+}
+
+function formatDate(isoStr) {
+  const fmt = document.getElementById('dateFmt').value;
+  const d = new Date(isoStr);
+  const months = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+  const dd = String(d.getDate()).padStart(2,'0');
+  const mm = String(d.getMonth()+1).padStart(2,'0');
+  const yyyy = d.getFullYear();
+  if (fmt === 'dd-MMM-yyyy') return `${dd}-${months[d.getMonth()]}-${yyyy}`;
+  if (fmt === 'yyyy-MM-dd') return isoStr;
+  return `${dd}/${mm}/${yyyy}`;
+}
+
+function toCsvBlob(result) {
+  const incAdj = document.getElementById('inclAdj').checked;
+  let cols = ['DATE','OPEN','HIGH','LOW','CLOSE','VOLUME'];
+  if (incAdj) cols.push('ADJ_CLOSE');
+  let csv = cols.join(',') + '\n';
+  result.data.forEach(row => {
+    const vals = [formatDate(row.DATE), row.OPEN, row.HIGH, row.LOW, row.CLOSE, row.VOLUME];
+    if (incAdj) vals.push(row.ADJ_CLOSE ?? '');
+    csv += vals.join(',') + '\n';
+  });
+  return new Blob([csv], { type: 'text/csv' });
+}
+
+function combinedCsvBlob(results) {
+  const incAdj = document.getElementById('inclAdj').checked;
+  let cols = ['SYMBOL','DATE','OPEN','HIGH','LOW','CLOSE','VOLUME'];
+  if (incAdj) cols.push('ADJ_CLOSE');
+  let csv = cols.join(',') + '\n';
+  results.filter(r => r.ok).forEach(r => {
+    r.data.forEach(row => {
+      const vals = [r.symbol, formatDate(row.DATE), row.OPEN, row.HIGH, row.LOW, row.CLOSE, row.VOLUME];
+      if (incAdj) vals.push(row.ADJ_CLOSE ?? '');
+      csv += vals.join(',') + '\n';
+    });
+  });
+  return new Blob([csv], { type: 'text/csv' });
+}
+
+function downloadBlob(blob, filename) {
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url; a.download = filename;
+  document.body.appendChild(a); a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+  showToast('Downloaded: ' + filename);
+}
+
+function renderResults(results) {
+  const okResults = results.filter(r => r.ok);
+  if (!okResults.length) return;
+
+  const el = document.getElementById('results');
+  el.classList.add('show');
+
+  // Download buttons
+  let btns = '';
+  if (okResults.length > 1) {
+    btns += `<button class="btn-dl" onclick="downloadCombined()">📋 Combined CSV</button>`;
+  }
+  okResults.forEach((r, i) => {
+    btns += `<button class="btn-dl" onclick="downloadSingle(${i})">📄 ${r.symbol}</button>`;
+  });
+  document.getElementById('dlButtons').innerHTML = btns;
+
+  // Tabs + content
+  let tabs = '<div class="tabs">';
+  let panels = '';
+  okResults.forEach((r, i) => {
+    tabs += `<button class="tab-btn${i===0?' active':''}" onclick="switchTab(${i})">${r.symbol}</button>`;
+    panels += `<div class="tab-panel${i===0?' active':''}" id="panel-${i}">`;
+    // Metrics
+    panels += `<div class="metrics-grid">
+      <div class="metric"><div class="label">Rows</div><div class="value">${r.rows.toLocaleString()}</div></div>
+      <div class="metric"><div class="label">Date Range</div><div class="value" style="font-size:0.9rem">${r.start}<br>→ ${r.end}</div></div>
+      <div class="metric"><div class="label">Missing Sessions</div><div class="value">${r.missing_sessions}</div></div>
+      <div class="metric"><div class="label">Last Close</div><div class="value">₹${r.last_close.toLocaleString()}</div></div>
+      <div class="metric"><div class="label">52W High</div><div class="value">${r.high_52w ? '₹'+r.high_52w.toLocaleString() : 'N/A'}</div></div>
+      <div class="metric"><div class="label">52W Low</div><div class="value">${r.low_52w ? '₹'+r.low_52w.toLocaleString() : 'N/A'}</div></div>
+      <div class="metric"><div class="label">Avg Volume</div><div class="value">${Math.round(r.avg_volume).toLocaleString()}</div></div>
+    </div>`;
+    // Chart
+    panels += `<div class="chart-container"><canvas id="chart-${i}"></canvas></div>`;
+    // Table (first 20 rows)
+    const showRows = r.data.slice(0, 20);
+    panels += `<div class="table-wrap"><table><thead><tr>
+      <th>DATE</th><th>OPEN</th><th>HIGH</th><th>LOW</th><th>CLOSE</th><th>VOLUME</th>
+      ${document.getElementById('inclAdj').checked ? '<th>ADJ_CLOSE</th>' : ''}
+    </tr></thead><tbody>`;
+    showRows.forEach(row => {
+      panels += `<tr>
+        <td>${formatDate(row.DATE)}</td><td>${row.OPEN.toFixed(2)}</td><td>${row.HIGH.toFixed(2)}</td>
+        <td>${row.LOW.toFixed(2)}</td><td>${row.CLOSE.toFixed(2)}</td>
+        <td>${row.VOLUME.toLocaleString()}</td>
+        ${document.getElementById('inclAdj').checked ? '<td>'+(row.ADJ_CLOSE?.toFixed(2) ?? '')+'</td>' : ''}
+      </tr>`;
+    });
+    panels += `</tbody></table></div>`;
+    if (r.data.length > 20) panels += `<p style="color:var(--text2);font-size:0.8rem;margin-top:8px;">Showing 20 of ${r.data.length} rows. Download CSV for full data.</p>`;
+    panels += `</div>`;
+  });
+  tabs += '</div>';
+
+  document.getElementById('symbolSections').innerHTML = tabs + panels;
+
+  // Render charts
+  okResults.forEach((r, i) => drawChart(r, i));
+}
+
+function switchTab(idx) {
+  document.querySelectorAll('.tab-btn').forEach((b,i) => b.classList.toggle('active', i===idx));
+  document.querySelectorAll('.tab-panel').forEach((p,i) => p.classList.toggle('active', i===idx));
+}
+
+function downloadSingle(idx) {
+  const r = allResults.filter(r => r.ok)[idx];
+  downloadBlob(toCsvBlob(r), r.symbol.replace('.','_') + '_OHLCV.csv');
+}
+
+function downloadCombined() {
+  downloadBlob(combinedCsvBlob(allResults), 'ALL_SYMBOLS_OHLCV.csv');
+}
+
+function showToast(msg, isError) {
+  const t = document.getElementById('toast');
+  t.textContent = msg;
+  t.style.background = isError ? 'var(--red)' : 'var(--green)';
+  t.classList.add('show');
+  setTimeout(() => t.classList.remove('show'), 2500);
+}
+
+// Simple canvas chart (no dependencies)
+function drawChart(result, idx) {
+  const canvas = document.getElementById('chart-' + idx);
+  if (!canvas) return;
+  const ctx = canvas.getContext('2d');
+  const dpr = window.devicePixelRatio || 1;
+  const rect = canvas.parentElement.getBoundingClientRect();
+  const W = rect.width - 32;
+  const H = 260;
+  canvas.width = W * dpr;
+  canvas.height = H * dpr;
+  canvas.style.width = W + 'px';
+  canvas.style.height = H + 'px';
+  ctx.scale(dpr, dpr);
+
+  const data = result.data;
+  const closes = data.map(d => d.CLOSE);
+  const volumes = data.map(d => d.VOLUME);
+  const minC = Math.min(...closes);
+  const maxC = Math.max(...closes);
+  const maxV = Math.max(...volumes);
+  const padT = 20, padB = 30, padL = 60, padR = 20;
+  const plotW = W - padL - padR;
+  const plotH = H - padT - padB;
+
+  // Background
+  ctx.fillStyle = '#111827';
+  ctx.fillRect(0, 0, W, H);
+
+  // Grid
+  ctx.strokeStyle = 'rgba(255,255,255,0.06)';
+  ctx.lineWidth = 1;
+  for (let i = 0; i <= 4; i++) {
+    const y = padT + (plotH / 4) * i;
+    ctx.beginPath(); ctx.moveTo(padL, y); ctx.lineTo(W - padR, y); ctx.stroke();
+  }
+
+  // Volume bars
+  const barW = Math.max(1, plotW / data.length - 0.5);
+  ctx.fillStyle = 'rgba(0,255,240,0.12)';
+  data.forEach((d, i) => {
+    const x = padL + (i / (data.length - 1 || 1)) * plotW;
+    const bh = maxV > 0 ? (d.VOLUME / maxV) * plotH * 0.3 : 0;
+    ctx.fillRect(x - barW/2, H - padB - bh, barW, bh);
+  });
+
+  // Price line
+  ctx.strokeStyle = '#00fff0';
+  ctx.lineWidth = 1.5;
+  ctx.beginPath();
+  data.forEach((d, i) => {
+    const x = padL + (i / (data.length - 1 || 1)) * plotW;
+    const y = padT + (1 - (d.CLOSE - minC) / (maxC - minC || 1)) * plotH;
+    i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y);
+  });
+  ctx.stroke();
+
+  // Area fill
+  const lastX = padL + plotW;
+  ctx.lineTo(lastX, H - padB);
+  ctx.lineTo(padL, H - padB);
+  ctx.closePath();
+  const grad = ctx.createLinearGradient(0, padT, 0, H - padB);
+  grad.addColorStop(0, 'rgba(0,255,240,0.15)');
+  grad.addColorStop(1, 'rgba(0,255,240,0)');
+  ctx.fillStyle = grad;
+  ctx.fill();
+
+  // Y-axis labels
+  ctx.fillStyle = '#9ca3af';
+  ctx.font = '11px system-ui';
+  ctx.textAlign = 'right';
+  for (let i = 0; i <= 4; i++) {
+    const val = maxC - ((maxC - minC) / 4) * i;
+    const y = padT + (plotH / 4) * i;
+    ctx.fillText('₹' + val.toFixed(0), padL - 8, y + 4);
+  }
+
+  // X-axis labels
+  ctx.textAlign = 'center';
+  const labelCount = Math.min(6, data.length);
+  for (let i = 0; i < labelCount; i++) {
+    const di = Math.floor(i * (data.length - 1) / (labelCount - 1 || 1));
+    const x = padL + (di / (data.length - 1 || 1)) * plotW;
+    const d = new Date(data[di].DATE);
+    const months = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+    ctx.fillText(months[d.getMonth()] + ' ' + d.getFullYear().toString().slice(2), x, H - 10);
+  }
+}
+
+// Resize charts
+window.addEventListener('resize', () => {
+  const okResults = allResults.filter(r => r.ok);
+  okResults.forEach((r, i) => drawChart(r, i));
+});
+</script>
+</body>
+</html>
