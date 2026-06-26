@@ -109,60 +109,109 @@ def normalize(df: pd.DataFrame, include_adj: bool) -> pd.DataFrame:
     if include_adj and "ADJ_CLOSE" in df.columns: cols.append("ADJ_CLOSE")
     return df[cols]
 
+def _fetch_yfinance(symbol: str, start: Optional[str], end: Optional[str],
+                    auto_adjust: bool) -> pd.DataFrame:
+    kwargs = {"interval": "1d", "progress": False, "auto_adjust": auto_adjust}
+    if start and end:
+        kwargs["start"] = start; kwargs["end"] = end
+    else:
+        kwargs["period"] = "max"
+    df = yf.download(symbol, **kwargs)
+    return df if df is not None else pd.DataFrame()
+
+def _fetch_jugaad(symbol: str, start: Optional[str], end: Optional[str]) -> pd.DataFrame:
+    from datetime import date as dt_date
+    from jugaad_data.nse import stock_df
+    bare = symbol.replace(".NS", "").replace(".BO", "")
+    if start:
+        sd = dt_date.fromisoformat(start)
+    else:
+        sd = dt_date(2000, 1, 1)
+    if end:
+        ed = dt_date.fromisoformat(end)
+    else:
+        ed = dt_date.today()
+    df = stock_df(symbol=bare, from_date=sd, to_date=ed, series="EQ")
+    if df is None or df.empty:
+        return pd.DataFrame()
+    rmap = {}
+    for c in df.columns:
+        cl = str(c).strip().upper()
+        if cl == "CH_OPENING_PRICE": rmap[c] = "OPEN"
+        elif cl == "CH_TRADE_HIGH_PRICE": rmap[c] = "HIGH"
+        elif cl == "CH_TRADE_LOW_PRICE": rmap[c] = "LOW"
+        elif cl == "CH_CLOSING_PRICE": rmap[c] = "CLOSE"
+        elif cl == "CH_TOT_TRADED_QTY": rmap[c] = "VOLUME"
+        elif cl == "CH_TIMESTAMP" or cl == "TIMESTAMP": rmap[c] = "DATE"
+        elif cl == "MKTIMESTAMP": rmap[c] = "DATE"
+    if rmap:
+        df = df.rename(columns=rmap)
+    return df
+
+def _build_result(df: pd.DataFrame, symbol: str, provider: str,
+                  start: Optional[str], end: Optional[str],
+                  include_adj: bool) -> Dict:
+    df = normalize(df, include_adj)
+    if start:
+        df = df[df["DATE"] >= pd.to_datetime(start)]
+    if end:
+        df = df[df["DATE"] <= pd.to_datetime(end)]
+    if df.empty:
+        return {"ok": False, "symbol": symbol, "error": "Empty after date filter"}
+
+    rows = len(df)
+    d0, d1 = df["DATE"].min(), df["DATE"].max()
+    bdays = pd.bdate_range(d0, d1).size
+
+    records = []
+    for _, row in df.iterrows():
+        r = {
+            "DATE": row["DATE"].strftime("%Y-%m-%d"),
+            "OPEN": round(float(row["OPEN"]), 2),
+            "HIGH": round(float(row["HIGH"]), 2),
+            "LOW": round(float(row["LOW"]), 2),
+            "CLOSE": round(float(row["CLOSE"]), 2),
+            "VOLUME": int(row["VOLUME"]) if pd.notna(row["VOLUME"]) else 0,
+        }
+        if include_adj and "ADJ_CLOSE" in df.columns and pd.notna(row.get("ADJ_CLOSE")):
+            r["ADJ_CLOSE"] = round(float(row["ADJ_CLOSE"]), 2)
+        records.append(r)
+
+    high_52 = float(df["HIGH"].tail(252).max()) if rows >= 10 else None
+    low_52 = float(df["LOW"].tail(252).min()) if rows >= 10 else None
+
+    return {
+        "ok": True, "symbol": symbol, "provider": provider,
+        "rows": rows,
+        "start": d0.strftime("%Y-%m-%d"),
+        "end": d1.strftime("%Y-%m-%d"),
+        "missing_sessions": max(bdays - rows, 0),
+        "last_close": round(float(df["CLOSE"].iloc[-1]), 2),
+        "avg_volume": round(float(df["VOLUME"].mean()), 0),
+        "high_52w": round(high_52, 2) if high_52 else None,
+        "low_52w": round(low_52, 2) if low_52 else None,
+        "data": records,
+    }
+
 def fetch_symbol(symbol: str, start: Optional[str], end: Optional[str],
                  auto_adjust: bool, include_adj: bool) -> Dict:
+    # Try yfinance first
     try:
-        kwargs = {"interval": "1d", "progress": False, "auto_adjust": auto_adjust}
-        if start and end:
-            kwargs["start"] = start; kwargs["end"] = end
-        else:
-            kwargs["period"] = "max"
-        df = yf.download(symbol, **kwargs)
-        if df is None or df.empty:
-            return {"ok": False, "symbol": symbol, "error": "No data returned"}
-        df = normalize(df, include_adj)
-        if start:
-            df = df[df["DATE"] >= pd.to_datetime(start)]
-        if end:
-            df = df[df["DATE"] <= pd.to_datetime(end)]
-        if df.empty:
-            return {"ok": False, "symbol": symbol, "error": "Empty after date filter"}
+        df = _fetch_yfinance(symbol, start, end, auto_adjust)
+        if df is not None and not df.empty:
+            return _build_result(df, symbol, "yfinance", start, end, include_adj)
+    except Exception:
+        pass
 
-        rows = len(df)
-        d0, d1 = df["DATE"].min(), df["DATE"].max()
-        bdays = pd.bdate_range(d0, d1).size
+    # Fallback to jugaad-data (NSE direct)
+    try:
+        df = _fetch_jugaad(symbol, start, end)
+        if df is not None and not df.empty:
+            return _build_result(df, symbol, "jugaad-data (NSE)", start, end, include_adj)
+    except Exception:
+        pass
 
-        records = []
-        for _, row in df.iterrows():
-            r = {
-                "DATE": row["DATE"].strftime("%Y-%m-%d"),
-                "OPEN": round(float(row["OPEN"]), 2),
-                "HIGH": round(float(row["HIGH"]), 2),
-                "LOW": round(float(row["LOW"]), 2),
-                "CLOSE": round(float(row["CLOSE"]), 2),
-                "VOLUME": int(row["VOLUME"]) if pd.notna(row["VOLUME"]) else 0,
-            }
-            if include_adj and "ADJ_CLOSE" in df.columns and pd.notna(row.get("ADJ_CLOSE")):
-                r["ADJ_CLOSE"] = round(float(row["ADJ_CLOSE"]), 2)
-            records.append(r)
-
-        high_52 = float(df["HIGH"].tail(252).max()) if rows >= 10 else None
-        low_52 = float(df["LOW"].tail(252).min()) if rows >= 10 else None
-
-        return {
-            "ok": True, "symbol": symbol,
-            "rows": rows,
-            "start": d0.strftime("%Y-%m-%d"),
-            "end": d1.strftime("%Y-%m-%d"),
-            "missing_sessions": max(bdays - rows, 0),
-            "last_close": round(float(df["CLOSE"].iloc[-1]), 2),
-            "avg_volume": round(float(df["VOLUME"].mean()), 0),
-            "high_52w": round(high_52, 2) if high_52 else None,
-            "low_52w": round(low_52, 2) if low_52 else None,
-            "data": records,
-        }
-    except Exception as e:
-        return {"ok": False, "symbol": symbol, "error": str(e)}
+    return {"ok": False, "symbol": symbol, "error": "No data from yfinance or jugaad-data"}
 
 
 class handler(BaseHTTPRequestHandler):

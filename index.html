@@ -288,6 +288,22 @@
   }
   .toast.show { transform: translateY(0); opacity: 1; }
 
+  /* CSV upload */
+  .csv-upload-zone {
+    border: 2px dashed var(--border);
+    border-radius: 12px;
+    padding: 18px;
+    text-align: center;
+    cursor: pointer;
+    transition: border-color .2s, background .2s;
+    color: var(--text2);
+    font-size: 0.9rem;
+  }
+  .csv-upload-zone:hover, .csv-upload-zone.dragover {
+    border-color: var(--accent);
+    background: rgba(0,255,240,0.04);
+  }
+
   .footer {
     text-align: center; padding: 30px;
     color: var(--text2); font-size: 0.8rem;
@@ -312,6 +328,18 @@
       <input type="text" id="single" placeholder="e.g. RELIANCE or NATCO">
       <label>Multiple symbols (comma or newline separated)</label>
       <textarea id="multi" placeholder="TCS&#10;INFY&#10;SBIN, HDFCBANK"></textarea>
+      <label>Or upload a CSV file with a "Symbol" column</label>
+      <div class="csv-upload-zone" id="dropZone" onclick="document.getElementById('csvFile').click()"
+           ondragover="event.preventDefault();this.classList.add('dragover')"
+           ondragleave="this.classList.remove('dragover')"
+           ondrop="event.preventDefault();this.classList.remove('dragover');handleCsvDrop(event)">
+        <input type="file" id="csvFile" accept=".csv,.txt,.xlsx" style="display:none" onchange="handleCsvFile(this.files[0])">
+        <div id="uploadLabel">📁 Click or drag CSV here</div>
+      </div>
+      <div id="csvInfo" style="display:none;margin-top:8px;">
+        <span style="color:var(--green);font-size:0.85rem;" id="csvInfoText"></span>
+        <button onclick="clearCsv()" style="background:none;border:none;color:var(--red);cursor:pointer;font-size:0.85rem;margin-left:8px;">✕ Clear</button>
+      </div>
     </div>
     <div class="card">
       <h3>📅 Period</h3>
@@ -388,6 +416,50 @@
 
 <script>
 let allResults = [];
+let csvSymbols = [];
+
+function handleCsvDrop(e) {
+  const file = e.dataTransfer.files[0];
+  if (file) handleCsvFile(file);
+}
+
+function handleCsvFile(file) {
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = function(e) {
+    const text = e.target.result;
+    const lines = text.split(/\r?\n/).filter(l => l.trim());
+    if (lines.length < 2) { showToast('CSV has no data rows', true); return; }
+    const headers = lines[0].split(',').map(h => h.trim().replace(/^"|"$/g, '').toLowerCase());
+    let symIdx = headers.findIndex(h => h === 'symbol');
+    if (symIdx === -1) symIdx = headers.findIndex(h => h === 'ticker');
+    if (symIdx === -1) symIdx = headers.findIndex(h => h === 'stock');
+    if (symIdx === -1) symIdx = headers.findIndex(h => h === 'name');
+    if (symIdx === -1) symIdx = headers.findIndex(h => h.includes('symbol'));
+    if (symIdx === -1) {
+      showToast('No "Symbol" column found in CSV. Expected: Symbol, Ticker, Stock, or Name', true);
+      return;
+    }
+    const syms = [];
+    for (let i = 1; i < lines.length; i++) {
+      const cols = lines[i].split(',').map(c => c.trim().replace(/^"|"$/g, ''));
+      const val = cols[symIdx];
+      if (val && val.length > 0) syms.push(val);
+    }
+    csvSymbols = [...new Set(syms)];
+    document.getElementById('csvInfo').style.display = 'block';
+    document.getElementById('csvInfoText').textContent = `✅ ${csvSymbols.length} symbols loaded from ${file.name}`;
+    document.getElementById('uploadLabel').textContent = `📄 ${file.name}`;
+  };
+  reader.readAsText(file);
+}
+
+function clearCsv() {
+  csvSymbols = [];
+  document.getElementById('csvFile').value = '';
+  document.getElementById('csvInfo').style.display = 'none';
+  document.getElementById('uploadLabel').textContent = '📁 Click or drag CSV here';
+}
 
 function parseSymbols() {
   const s = document.getElementById('single').value.trim();
@@ -397,6 +469,7 @@ function parseSymbols() {
   if (m) m.split(/[\n,]+/).map(t => t.trim()).filter(Boolean).forEach(t => {
     t.split(/\s+/).forEach(p => { if (p) parts.push(p); });
   });
+  csvSymbols.forEach(sym => parts.push(sym));
   return [...new Set(parts)];
 }
 
@@ -472,7 +545,7 @@ function renderStatus(results) {
     `✅ Done — ${ok} succeeded` + (fail ? `, <span style="color:var(--red)">${fail} failed</span>` : '');
   let html = '';
   results.forEach(r => {
-    if (r.ok) html += `<div class="log-line ok">✅ ${r.symbol} — ${r.rows} rows (${r.start} → ${r.end})</div>`;
+    if (r.ok) html += `<div class="log-line ok">✅ ${r.symbol} — ${r.rows} rows via ${r.provider || 'yfinance'} (${r.start} → ${r.end})</div>`;
     else html += `<div class="log-line fail">❌ ${r.symbol} — ${r.error}</div>`;
   });
   log.innerHTML = html;
@@ -553,6 +626,7 @@ function renderResults(results) {
     panels += `<div class="tab-panel${i===0?' active':''}" id="panel-${i}">`;
     // Metrics
     panels += `<div class="metrics-grid">
+      <div class="metric"><div class="label">Provider</div><div class="value" style="font-size:0.85rem">${r.provider || 'yfinance'}</div></div>
       <div class="metric"><div class="label">Rows</div><div class="value">${r.rows.toLocaleString()}</div></div>
       <div class="metric"><div class="label">Date Range</div><div class="value" style="font-size:0.9rem">${r.start}<br>→ ${r.end}</div></div>
       <div class="metric"><div class="label">Missing Sessions</div><div class="value">${r.missing_sessions}</div></div>
