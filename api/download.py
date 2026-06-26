@@ -66,7 +66,9 @@ def resolve_symbol(raw: str, exchange: str, fuzzy: bool) -> str:
     return f"{mapped}{exchange}"
 
 def flatten_cols(df: pd.DataFrame) -> pd.DataFrame:
-    if hasattr(df.columns, "to_flat_index"):
+    if isinstance(df.columns, pd.MultiIndex):
+        df.columns = df.columns.droplevel(1) if df.columns.nlevels > 1 else df.columns
+    elif hasattr(df.columns, "to_flat_index"):
         flat = []
         for c in df.columns.to_flat_index():
             if isinstance(c, tuple):
@@ -92,10 +94,12 @@ def normalize(df: pd.DataFrame, include_adj: bool) -> pd.DataFrame:
 
     df = df.rename(columns={date_col: "DATE"})
     rmap = {"open": "OPEN", "high": "HIGH", "low": "LOW", "close": "CLOSE",
-            "adj close": "ADJ_CLOSE", "adjclose": "ADJ_CLOSE", "volume": "VOLUME"}
-    lm = {str(c).lower(): c for c in df.columns}
+            "adj close": "ADJ_CLOSE", "adjclose": "ADJ_CLOSE", "volume": "VOLUME",
+            "price": "CLOSE"}
+    lm = {str(c).strip().lower(): c for c in df.columns}
     for k, v in rmap.items():
-        if k in lm: df = df.rename(columns={lm[k]: v})
+        if k in lm and v not in df.columns:
+            df = df.rename(columns={lm[k]: v})
     req = ["DATE", "OPEN", "HIGH", "LOW", "CLOSE", "VOLUME"]
     missing = [c for c in req if c not in df.columns]
     if missing: raise RuntimeError(f"Missing: {missing}")
@@ -134,18 +138,6 @@ def _fetch_jugaad(symbol: str, start: Optional[str], end: Optional[str]) -> pd.D
     df = stock_df(symbol=bare, from_date=sd, to_date=ed, series="EQ")
     if df is None or df.empty:
         return pd.DataFrame()
-    rmap = {}
-    for c in df.columns:
-        cl = str(c).strip().upper()
-        if cl == "CH_OPENING_PRICE": rmap[c] = "OPEN"
-        elif cl == "CH_TRADE_HIGH_PRICE": rmap[c] = "HIGH"
-        elif cl == "CH_TRADE_LOW_PRICE": rmap[c] = "LOW"
-        elif cl == "CH_CLOSING_PRICE": rmap[c] = "CLOSE"
-        elif cl == "CH_TOT_TRADED_QTY": rmap[c] = "VOLUME"
-        elif cl == "CH_TIMESTAMP" or cl == "TIMESTAMP": rmap[c] = "DATE"
-        elif cl == "MKTIMESTAMP": rmap[c] = "DATE"
-    if rmap:
-        df = df.rename(columns=rmap)
     return df
 
 def _build_result(df: pd.DataFrame, symbol: str, provider: str,
@@ -195,23 +187,29 @@ def _build_result(df: pd.DataFrame, symbol: str, provider: str,
 
 def fetch_symbol(symbol: str, start: Optional[str], end: Optional[str],
                  auto_adjust: bool, include_adj: bool) -> Dict:
+    errors = []
+
     # Try yfinance first
     try:
         df = _fetch_yfinance(symbol, start, end, auto_adjust)
         if df is not None and not df.empty:
             return _build_result(df, symbol, "yfinance", start, end, include_adj)
-    except Exception:
-        pass
+        else:
+            errors.append("yfinance: empty result")
+    except Exception as e:
+        errors.append(f"yfinance: {e}")
 
     # Fallback to jugaad-data (NSE direct)
     try:
         df = _fetch_jugaad(symbol, start, end)
         if df is not None and not df.empty:
             return _build_result(df, symbol, "jugaad-data (NSE)", start, end, include_adj)
-    except Exception:
-        pass
+        else:
+            errors.append("jugaad-data: empty result")
+    except Exception as e:
+        errors.append(f"jugaad-data: {e}")
 
-    return {"ok": False, "symbol": symbol, "error": "No data from yfinance or jugaad-data"}
+    return {"ok": False, "symbol": symbol, "error": " | ".join(errors)}
 
 
 class handler(BaseHTTPRequestHandler):
