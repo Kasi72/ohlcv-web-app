@@ -139,18 +139,20 @@ def _fetch_yfinance(symbol: str, start: Optional[str], end: Optional[str],
 def _fetch_jugaad(symbol: str, start: Optional[str], end: Optional[str]) -> pd.DataFrame:
     from datetime import date as dt_date
     from jugaad_data.nse import stock_df
-    bare = symbol.replace(".NS", "").replace(".BO", "")
-    if start:
-        sd = dt_date.fromisoformat(start)
-    else:
-        sd = dt_date(2000, 1, 1)
-    if end:
-        ed = dt_date.fromisoformat(end)
-    else:
-        ed = dt_date.today()
     from jugaad_data.nse.history import NSEHistory
-    NSEHistory.cache_dir = "/tmp/.cache"
-    df = stock_df(symbol=bare, from_date=sd, to_date=ed, series="EQ")
+    import jugaad_data.util as _jutil
+
+    bare = symbol.replace(".NS", "").replace(".BO", "")
+    sd = dt_date.fromisoformat(start) if start else dt_date(2000, 1, 1)
+    ed = dt_date.fromisoformat(end) if end else dt_date.today()
+
+    NSEHistory.cache_dir = "/tmp/.jcache"
+    _orig_makedirs = os.makedirs
+    os.makedirs = lambda p, *a, **kw: _orig_makedirs(p, exist_ok=True)
+    try:
+        df = stock_df(symbol=bare, from_date=sd, to_date=ed, series="EQ")
+    finally:
+        os.makedirs = _orig_makedirs
     if df is None or df.empty:
         return pd.DataFrame()
     return df
